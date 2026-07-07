@@ -298,6 +298,35 @@ class TestConfigShow:
         # Should NOT contain rich formatting
         assert "Config file" not in result.stdout
 
+    def test_show_redacts_api_keys(self, tmp_path: Path) -> None:
+        """Test that show masks secret-looking values, including with --raw/--json."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[defaults]\nopenai_api_key = "sk-super-secret-value"\nllm-provider = "ollama"'
+        )
+
+        result = runner.invoke(app, ["config", "show", "--path", str(config_path)])
+        assert result.exit_code == 0
+        assert "sk-super-secret-value" not in result.stdout
+        assert "redacted" in result.stdout
+        assert "ollama" in result.stdout
+
+        raw_result = runner.invoke(
+            app,
+            ["config", "show", "--path", str(config_path), "--raw"],
+        )
+        assert raw_result.exit_code == 0
+        assert "sk-super-secret-value" not in raw_result.stdout
+        assert "(redacted)" in raw_result.stdout
+
+        json_result = runner.invoke(
+            app,
+            ["config", "show", "--path", str(config_path), "--json"],
+        )
+        assert json_result.exit_code == 0
+        assert "sk-super-secret-value" not in json_result.stdout
+        assert "(redacted)" in json_result.stdout
+
     def test_show_invalid_path(self, tmp_path: Path) -> None:
         """Test that show reports when the provided path does not exist."""
         config_path = tmp_path / "missing.toml"

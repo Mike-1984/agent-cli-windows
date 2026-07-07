@@ -59,7 +59,10 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        # No cookies are used for auth (the API key travels in the Authorization
+        # header), so this stays False - wildcard origin + credentials would let
+        # any site a user's browser visits reach this local server.
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )

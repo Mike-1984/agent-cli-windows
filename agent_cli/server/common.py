@@ -112,11 +112,13 @@ def configure_app(app: FastAPI) -> None:
     """
     from fastapi.middleware.cors import CORSMiddleware  # noqa: PLC0415
 
-    # Add CORS middleware
+    # Add CORS middleware. No cookies are used for auth here, so
+    # allow_credentials stays False - wildcard origin + credentials would let
+    # any site a user's browser visits reach this local server.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )

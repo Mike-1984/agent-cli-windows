@@ -50,7 +50,9 @@ is gitignored in this repo's own `.gitignore`, but that only protects you here, 
 your own projects. `agent-cli config init` now creates the file with owner-only (`0600`)
 permissions; if you edited an older file into existence yourself, restrict it with
 `chmod 600 <path>`. When possible, set `OPENAI_API_KEY` / `GEMINI_API_KEY` as environment
-variables instead - they're never written to disk by agent-cli.
+variables instead - they're never written to disk by agent-cli. `agent-cli config show`
+(including `--raw`/`--json`) masks any key/token/secret/password-shaped value in its
+output - read the file directly if you need the real value.
 
 ## Managing Configuration
 

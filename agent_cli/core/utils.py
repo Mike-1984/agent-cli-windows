@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import os
+import re
 import signal
 import sys
 import time
@@ -56,6 +57,26 @@ def redact_cli_args(tokens: list[str]) -> list[str]:
             continue
         redacted.append(token)
     return redacted
+
+
+_TOML_KEY_VALUE_RE = re.compile(r"^(?P<indent>\s*)(?P<key>[\w.-]+)(?P<eq>\s*=\s*)(?P<value>.*)$")
+
+
+def redact_toml_secrets(content: str) -> str:
+    """Mask the value of any TOML key that looks like a secret (key/token/secret/password)."""
+    lines = content.splitlines(keepends=True)
+    redacted_lines: list[str] = []
+    for line in lines:
+        body = line.splitlines()[0] if line.splitlines() else line
+        newline = line[len(body) :]
+        match = _TOML_KEY_VALUE_RE.match(body)
+        if match and any(m in match["key"].lower() for m in _SENSITIVE_ARG_MARKERS):
+            redacted_lines.append(
+                f'{match["indent"]}{match["key"]}{match["eq"]}"(redacted)"{newline}'
+            )
+        else:
+            redacted_lines.append(line)
+    return "".join(redacted_lines)
 
 
 if TYPE_CHECKING:

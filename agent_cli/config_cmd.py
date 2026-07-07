@@ -16,7 +16,7 @@ import typer
 from agent_cli.cli import app
 from agent_cli.config import CONFIG_PATHS, USER_CONFIG_PATH, _config_path
 from agent_cli.core.process import set_process_title
-from agent_cli.core.utils import console
+from agent_cli.core.utils import console, redact_toml_secrets
 
 config_app = typer.Typer(
     name="config",
@@ -309,7 +309,7 @@ def config_show(
         )
         raise typer.Exit(1)
 
-    content = config_file.read_text(encoding="utf-8")
+    content = redact_toml_secrets(config_file.read_text(encoding="utf-8"))
 
     if json_output:
         print(
@@ -334,4 +334,7 @@ def config_show(
     syntax = Syntax(content, "toml", theme="monokai", line_numbers=True, word_wrap=True)
     console.print(syntax)
     console.print()
-    console.print("[dim]Tip: Use -r for copy-paste friendly output[/dim]")
+    console.print(
+        "[dim]Secret-looking values (key/token/secret/password) are redacted above "
+        f"(including with --raw/--json). Read {config_file} directly if you need the real value.[/dim]",
+    )
