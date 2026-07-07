@@ -237,11 +237,11 @@ async def process_chat_request(
 
     # 4. Setup Agent
     from pydantic_ai import Agent  # noqa: PLC0415
-    from pydantic_ai.models.openai import OpenAIModel  # noqa: PLC0415
+    from pydantic_ai.models.openai import OpenAIChatModel  # noqa: PLC0415
     from pydantic_ai.providers.openai import OpenAIProvider  # noqa: PLC0415
 
     provider = OpenAIProvider(base_url=openai_base_url, api_key=api_key or "dummy")
-    model = OpenAIModel(model_name=request.model, provider=provider)
+    model = OpenAIChatModel(model_name=request.model, provider=provider)
 
     tools = [read_full_document] if tools_allowed else []
     agent = Agent(model=model, tools=tools, system_prompt=system_prompt)

@@ -15,14 +15,14 @@ if TYPE_CHECKING:
 
     from pydantic_ai import Agent
     from pydantic_ai.models.gemini import GeminiModel
-    from pydantic_ai.models.openai import OpenAIModel
+    from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.tools import Tool
 
     from agent_cli import config
 
 
-def _openai_llm_model(openai_cfg: config.OpenAILLM) -> OpenAIModel:
-    from pydantic_ai.models.openai import OpenAIModel  # noqa: PLC0415
+def _openai_llm_model(openai_cfg: config.OpenAILLM) -> OpenAIChatModel:
+    from pydantic_ai.models.openai import OpenAIChatModel  # noqa: PLC0415
     from pydantic_ai.providers.openai import OpenAIProvider  # noqa: PLC0415
 
     # For custom base URLs (like llama-server), API key might not be required
@@ -40,16 +40,16 @@ def _openai_llm_model(openai_cfg: config.OpenAILLM) -> OpenAIModel:
         provider = OpenAIProvider(api_key=openai_cfg.openai_api_key)
 
     model_name = openai_cfg.llm_openai_model
-    return OpenAIModel(model_name=model_name, provider=provider)
+    return OpenAIChatModel(model_name=model_name, provider=provider)
 
 
-def _ollama_llm_model(ollama_cfg: config.Ollama) -> OpenAIModel:
-    from pydantic_ai.models.openai import OpenAIModel  # noqa: PLC0415
+def _ollama_llm_model(ollama_cfg: config.Ollama) -> OpenAIChatModel:
+    from pydantic_ai.models.openai import OpenAIChatModel  # noqa: PLC0415
     from pydantic_ai.providers.openai import OpenAIProvider  # noqa: PLC0415
 
     provider = OpenAIProvider(base_url=f"{ollama_cfg.llm_ollama_host}/v1")
     model_name = ollama_cfg.llm_ollama_model
-    return OpenAIModel(model_name=model_name, provider=provider)
+    return OpenAIChatModel(model_name=model_name, provider=provider)
 
 
 def _gemini_llm_model(gemini_cfg: config.GeminiLLM) -> GeminiModel:
