@@ -30,13 +30,14 @@ def create_test_wav_file(filepath: Path, duration_seconds: float = 1.0) -> None:
         wav_file.writeframes(audio_data)
 
 
-def test_get_transcriptions_dir():
+def test_get_transcriptions_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that the transcriptions directory is created correctly."""
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
     transcriptions_dir = asr._get_transcriptions_dir()
 
     assert transcriptions_dir.exists()
     assert transcriptions_dir.is_dir()
-    assert transcriptions_dir == Path.home() / ".config" / "agent-cli" / "transcriptions"
+    assert transcriptions_dir == tmp_path / ".config" / "agent-cli" / "transcriptions"
 
 
 def test_save_audio_to_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

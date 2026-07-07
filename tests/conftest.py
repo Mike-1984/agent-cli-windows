@@ -7,12 +7,16 @@ import contextlib
 import io
 import logging
 import sys
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
 from rich.console import Console
 
-from agent_cli.core import deps, utils
+from agent_cli.core import deps, transcription_logger, utils
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _mock__check_extra_installed(extra: str) -> bool:  # noqa: ARG001
@@ -60,6 +64,24 @@ def reset_rich_console_quiet() -> None:
     """Prevent JSON-mode CLI tests from silencing later command output."""
     utils.console.quiet = False
     utils.err_console.quiet = False
+
+
+@pytest.fixture(autouse=True)
+def isolate_transcription_log(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Redirect the default transcription logger away from ~/.config/agent-cli.
+
+    Code under test that falls back to get_default_logger() (e.g. the
+    transcription proxy API) must never append to the user's real
+    transcriptions.jsonl during a test run.
+    """
+    monkeypatch.setattr(
+        transcription_logger,
+        "_default_logger",
+        transcription_logger.TranscriptionLogger(tmp_path / "transcriptions.jsonl"),
+    )
 
 
 @pytest.fixture
