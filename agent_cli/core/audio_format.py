@@ -94,62 +94,57 @@ def convert_audio_to_wyoming_format(
         msg = "FFmpeg not found in PATH. Please install FFmpeg to convert audio formats."
         raise RuntimeError(msg)
 
-    # Create temporary files for input and output
+    # Create temporary files for input and output. Written via write_bytes rather than
+    # keeping a NamedTemporaryFile handle open, since Windows refuses to delete (or let
+    # FFmpeg open) a file while this process still holds it open.
     suffix = _get_file_extension(source_filename)
-    with (
-        tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as input_file,
-        tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as output_file,
-    ):
-        input_path = Path(input_file.name)
-        output_path = Path(output_file.name)
+    tmp_dir = Path(tempfile.mkdtemp())
+    input_path = tmp_dir / f"input{suffix}"
+    output_path = tmp_dir / "output.wav"
 
-        try:
-            # Write input audio data
-            input_file.write(audio_data)
-            input_file.flush()
+    try:
+        input_path.write_bytes(audio_data)
 
-            # Build FFmpeg command to convert to Wyoming format
-            # -f s16le: 16-bit signed little-endian PCM
-            # -ar 16000: 16kHz sample rate
-            # -ac 1: mono (1 channel)
-            cmd = [
-                "ffmpeg",
-                "-y",
-                "-i",
-                str(input_path),
-                "-f",
-                "s16le",
-                "-ar",
-                str(constants.AUDIO_RATE),
-                "-ac",
-                str(constants.AUDIO_CHANNELS),
-                str(output_path),
-            ]
+        # Build FFmpeg command to convert to Wyoming format
+        # -f s16le: 16-bit signed little-endian PCM
+        # -ar 16000: 16kHz sample rate
+        # -ac 1: mono (1 channel)
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(input_path),
+            "-f",
+            "s16le",
+            "-ar",
+            str(constants.AUDIO_RATE),
+            "-ac",
+            str(constants.AUDIO_CHANNELS),
+            str(output_path),
+        ]
 
-            logger.debug("Running FFmpeg command: %s", " ".join(cmd))
+        logger.debug("Running FFmpeg command: %s", " ".join(cmd))
 
-            # Run FFmpeg
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=False,
-                check=False,
-            )
+        # Run FFmpeg
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=False,
+            check=False,
+        )
 
-            if result.returncode != 0:
-                stderr_text = result.stderr.decode("utf-8", errors="replace")
-                logger.error("FFmpeg failed with return code %d", result.returncode)
-                logger.error("FFmpeg stderr: %s", stderr_text)
-                msg = f"FFmpeg conversion failed: {stderr_text}"
-                raise RuntimeError(msg)
+        if result.returncode != 0:
+            stderr_text = result.stderr.decode("utf-8", errors="replace")
+            logger.error("FFmpeg failed with return code %d", result.returncode)
+            logger.error("FFmpeg stderr: %s", stderr_text)
+            msg = f"FFmpeg conversion failed: {stderr_text}"
+            raise RuntimeError(msg)
 
-            # Read converted audio data
-            return output_path.read_bytes()
+        # Read converted audio data
+        return output_path.read_bytes()
 
-        finally:
-            # Clean up temporary files
-            input_path.unlink(missing_ok=True)
-            output_path.unlink(missing_ok=True)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def convert_audio_to_wav_format(

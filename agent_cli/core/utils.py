@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 import os
@@ -37,6 +38,16 @@ if TYPE_CHECKING:
     from datetime import timedelta
     from logging import Handler
     from pathlib import Path
+
+if sys.platform == "win32":
+    # When stdout/stderr aren't attached to a real console (piped, redirected to a
+    # file, or launched hidden e.g. via AutoHotkey's Run "Hide"), Python falls back
+    # to the legacy ANSI codepage (e.g. cp1252), which can't encode emoji and
+    # crashes. Force UTF-8, which is what Windows' own console IO layer expects.
+    for _stream in (sys.stdout, sys.stderr):
+        if isinstance(_stream, io.TextIOWrapper):
+            with suppress(ValueError):
+                _stream.reconfigure(encoding="utf-8", errors="replace")
 
 console = Console(soft_wrap=True)
 err_console = Console(stderr=True, soft_wrap=True)
