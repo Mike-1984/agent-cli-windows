@@ -15,6 +15,20 @@ It provides a suite of powerful tools for voice and text interaction, designed f
 > This ensures your privacy and allows the tools to work completely offline.
 > You can also optionally configure the agents to use OpenAI/Gemini services.
 
+## About This Fork
+
+This is a fork of [basnijholt/agent-cli](https://github.com/basnijholt/agent-cli) focused on
+making `agent-cli` actually work natively on Windows — no WSL, no Docker required. The
+[Windows installation guide](docs/installation/windows.md) documents a setup (native Ollama +
+faster-whisper + Piper) that has been verified end-to-end on real Windows hardware, and this
+fork includes fixes for three bugs that surfaced during that verification: a crash printing
+emoji when output isn't attached to a real console (e.g. via AutoHotkey hotkeys), a
+`WinError 32` deleting temp files that FFmpeg conversion left open, and a `pydantic-ai-slim`
+API rename (`OpenAIModel` → `OpenAIChatModel`) that broke every LLM call. See the guide's
+[Known Windows Fixes](docs/installation/windows.md#known-windows-fixes-in-this-fork) section
+for details. For macOS/Linux, or if you don't need these Windows-specific fixes, see the
+upstream project.
+
 <!-- SECTION:why-i-built-this:START -->
 ## Why I built this
 
