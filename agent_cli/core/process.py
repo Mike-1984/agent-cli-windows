@@ -22,6 +22,7 @@ _original_proctitle: str | None = None
 class _PidInfo(NamedTuple):
     pid: int
     uses_lock: bool
+    create_time: float | None = None
 
 
 class ProcessStatus(NamedTuple):
@@ -140,6 +141,36 @@ def _is_pid_running(pid: int) -> bool:
         return True
 
 
+def _process_create_time(pid: int) -> float | None:
+    """Return a process's OS-reported start time, or None if unavailable.
+
+    Windows has no equivalent to the POSIX advisory lock used elsewhere in
+    this module, so a dead process's PID can be reused by an unrelated one
+    before its stale PID file is cleaned up; comparing start times catches that.
+    """
+    if sys.platform != "win32":
+        return None
+
+    import psutil  # noqa: PLC0415
+
+    try:
+        return psutil.Process(pid).create_time()
+    except psutil.Error:
+        return None
+
+
+def _pid_info_is_live(pid_info: _PidInfo) -> bool:
+    """Check that a PID file's target is running and is the process that wrote it."""
+    if not _is_pid_running(pid_info.pid):
+        return False
+    if pid_info.create_time is None:
+        return True
+    actual_create_time = _process_create_time(pid_info.pid)
+    if actual_create_time is None:
+        return True
+    return abs(actual_create_time - pid_info.create_time) < 1.0
+
+
 def _supports_process_locks() -> bool:
     """Return whether this platform supports POSIX advisory locks."""
     return sys.platform != "win32"
@@ -214,7 +245,12 @@ def _pid_info_from_payload(process_name: str, payload: object) -> _PidInfo | Non
     except (KeyError, TypeError, ValueError):
         return None
 
-    return _PidInfo(pid=pid, uses_lock=True)
+    try:
+        create_time = float(payload["create_time"])
+    except (KeyError, TypeError, ValueError):
+        create_time = None
+
+    return _PidInfo(pid=pid, uses_lock=True, create_time=create_time)
 
 
 def _read_pid_info(process_name: str) -> _PidInfo | None:
@@ -236,12 +272,15 @@ def _read_pid_info(process_name: str) -> _PidInfo | None:
 def _write_pid_info(process_name: str) -> None:
     """Write PID metadata for the current process."""
     pid_file = _get_pid_file(process_name)
-    payload = {
+    payload: dict[str, object] = {
         "version": 1,
         "process_name": process_name,
         "pid": os.getpid(),
         "created_at": time.time(),
     }
+    create_time = _process_create_time(os.getpid())
+    if create_time is not None:
+        payload["create_time"] = create_time
     pid_file.write_text(json.dumps(payload, sort_keys=True))
 
 
@@ -277,7 +316,7 @@ def get_process_status(process_name: str) -> ProcessStatus:
             stale_cleaned=True,
         )
 
-    if _is_pid_running(pid_info.pid):
+    if _pid_info_is_live(pid_info):
         return ProcessStatus(process_name=process_name, running=True, pid=pid_info.pid)
 
     _cleanup_process_files(process_name)

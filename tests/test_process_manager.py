@@ -127,6 +127,60 @@ def test_get_process_status_current_process() -> None:
     assert status.pid == os.getpid()
 
 
+def _write_pid_info_file(pid_file: Path, process_name: str, pid: int, create_time: float) -> None:
+    pid_file.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "process_name": process_name,
+                "pid": pid,
+                "created_at": 0.0,
+                "create_time": create_time,
+            },
+        ),
+    )
+
+
+@patch("agent_cli.core.process._is_pid_running", return_value=True)
+@patch("agent_cli.core.process._process_create_time", return_value=999.0)
+def test_get_process_status_detects_pid_reuse(
+    mock_create_time: MagicMock,  # noqa: ARG001
+    mock_is_pid_running: MagicMock,  # noqa: ARG001
+) -> None:
+    """A dead process's PID reused by an unrelated process must not read as running.
+
+    Windows has no equivalent to the POSIX advisory lock used elsewhere in this
+    module, so `_pid_info_is_live` falls back to comparing OS process start times.
+    """
+    process_name = "test-process"
+    pid_file = process._get_pid_file(process_name)
+    _write_pid_info_file(pid_file, process_name, pid=12345, create_time=100.0)
+
+    status = process.get_process_status(process_name)
+
+    assert status.running is False
+    assert status.pid is None
+    assert status.stale_cleaned is True
+    assert not pid_file.exists()
+
+
+@patch("agent_cli.core.process._is_pid_running", return_value=True)
+@patch("agent_cli.core.process._process_create_time", return_value=100.0)
+def test_get_process_status_matching_create_time_is_running(
+    mock_create_time: MagicMock,  # noqa: ARG001
+    mock_is_pid_running: MagicMock,  # noqa: ARG001
+) -> None:
+    """A PID file whose recorded start time matches the live process reports running."""
+    process_name = "test-process"
+    pid_file = process._get_pid_file(process_name)
+    _write_pid_info_file(pid_file, process_name, pid=12345, create_time=100.0)
+
+    status = process.get_process_status(process_name)
+
+    assert status.running is True
+    assert status.pid == 12345
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX lock files are Unix-only")
 def test_pid_file_context_writes_metadata_and_holds_lock() -> None:
     """New PID files should carry process metadata and be backed by a live lock."""

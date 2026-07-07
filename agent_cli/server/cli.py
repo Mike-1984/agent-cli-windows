@@ -414,13 +414,7 @@ def whisper_cmd(  # noqa: C901, PLR0912, PLR0915
             ),
         ),
     ] = False,
-    host: Annotated[
-        str,
-        typer.Option(
-            "--host",
-            help="Network interface to bind. Use `0.0.0.0` for all interfaces",
-        ),
-    ] = "0.0.0.0",  # noqa: S104
+    host: str = opts.SERVER_HOST,
     port: Annotated[
         int,
         typer.Option(
@@ -667,10 +661,7 @@ def whisper_cmd(  # noqa: C901, PLR0912, PLR0915
 @app.command("transcribe-proxy")
 @requires_extras("server", "wyoming", "llm")
 def transcribe_proxy_cmd(
-    host: Annotated[
-        str,
-        typer.Option("--host", help="Network interface to bind. Use `0.0.0.0` for all interfaces"),
-    ] = "0.0.0.0",  # noqa: S104
+    host: str = opts.SERVER_HOST,
     port: Annotated[
         int,
         typer.Option("--port", "-p", help="Port for the HTTP API"),
@@ -797,13 +788,7 @@ def tts_cmd(  # noqa: PLR0915
             ),
         ),
     ] = False,
-    host: Annotated[
-        str,
-        typer.Option(
-            "--host",
-            help="Network interface to bind. Use `0.0.0.0` for all interfaces",
-        ),
-    ] = "0.0.0.0",  # noqa: S104
+    host: str = opts.SERVER_HOST,
     port: Annotated[
         int,
         typer.Option(

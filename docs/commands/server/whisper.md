@@ -119,12 +119,17 @@ agent-cli server whisper \
 | `--trust-remote-code` | `false` | Allow Hugging Face model repositories to execute custom Python code. Known supported remote-code ASR models are trusted automatically. |
 | `--ttl` | `300` | Seconds of inactivity before unloading model from memory. Set to 0 to keep loaded indefinitely |
 | `--preload` | `false` | Load model(s) immediately at startup instead of on first request. Useful for reducing first-request latency |
-| `--host` | `0.0.0.0` | Network interface to bind. Use `0.0.0.0` for all interfaces |
 | `--port, --asr-openai-port, -p` | `10301` | Port for OpenAI-compatible HTTP API (`/v1/audio/transcriptions`) |
 | `--wyoming-port, --asr-wyoming-port` | `10300` | Port for Wyoming protocol (Home Assistant integration) |
 | `--no-wyoming` | `false` | Disable Wyoming protocol server (only run HTTP API) |
 | `--download-only` | `false` | Download model(s) to cache and exit. Useful for Docker builds |
 | `--backend, -b` | `auto` | Inference backend: `auto` (faster-whisper on CUDA/CPU, MLX on Apple Silicon), `faster-whisper`, `mlx`, `transformers` (HuggingFace, supports safetensors and known remote-code ASR models), `nemo` (NVIDIA NeMo, supports Parakeet models) |
+
+### Server Configuration
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--host` | `127.0.0.1` | Host/IP to bind API servers to. |
 
 ### General Options
 
