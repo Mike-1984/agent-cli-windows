@@ -2074,8 +2074,9 @@ uv tool install "agent-cli[vad]"
 - **Install RAG deps first**: `pip install "agent-cli[rag]"` (or, from the repo, `uv sync --extra rag`)
 - **Note on ignored files**: `.gitignore` rules in your docs folder are respected during indexing; if the docs folder is inside a git repo, parent `.gitignore` files up to the repo root are also applied. Use `!pattern` entries to re-include paths when needed
 - **Start Server (Local LLM)**: `agent-cli rag-proxy --docs-folder ~/Documents/Notes --openai-base-url http://localhost:11434/v1 --port 8000`
-- **Start Server (OpenAI)**: `agent-cli rag-proxy --docs-folder ~/Documents/Notes --openai-api-key sk-...`
+- **Start Server (OpenAI)**: set `OPENAI_API_KEY` in your environment, then `agent-cli rag-proxy --docs-folder ~/Documents/Notes` (avoids putting the key on the command line, where it's visible to other local users via `ps`)
 - **Use with Agent-CLI**: `agent-cli chat --openai-base-url http://localhost:8000/v1 --llm-provider openai`
+- **Note on `--host`**: the server binds to `127.0.0.1` by default. Only pass `--host 0.0.0.0` on a trusted network - anyone who can reach the port can use your configured API key.
 
 <details>
 <summary>See the output of <code>agent-cli rag-proxy --help</code></summary>
@@ -2183,7 +2184,7 @@ uv tool install "agent-cli[vad]"
 ╰────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Server Configuration ─────────────────────────────────────────────────────────────────╮
 │ --host        TEXT     Host/IP to bind API servers to.                                 │
-│                        [default: 0.0.0.0]                                              │
+│                        [default: 127.0.0.1]                                            │
 │ --port        INTEGER  Port for the RAG proxy API (e.g.,                               │
 │                        http://localhost:8000/v1/chat/completions).                     │
 │                        [default: 8000]                                                 │
@@ -2231,6 +2232,7 @@ The `memory proxy` command is the core feature—a middleware server that gives 
 - **Install memory deps first**: `pip install "agent-cli[memory]"` (or, from the repo, `uv sync --extra memory`)
 - **Start Server (Local LLM/OpenAI-compatible)**: `agent-cli memory proxy --memory-path ./memory_db --openai-base-url http://localhost:11434/v1 --embedding-model embeddinggemma:300m`
 - **Use with Agent-CLI**: `agent-cli chat --openai-base-url http://localhost:8100/v1 --llm-provider openai`
+- **Note on `--host`**: the server binds to `127.0.0.1` by default. Only pass `--host 0.0.0.0` on a trusted network - anyone who can reach the port can use your configured API key.
 
 <details>
 <summary>See the output of <code>agent-cli memory proxy --help</code></summary>
@@ -2350,7 +2352,7 @@ The `memory proxy` command is the core feature—a middleware server that gives 
 ╰────────────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Server Configuration ─────────────────────────────────────────────────────────────────╮
 │ --host        TEXT     Host/IP to bind API servers to.                                 │
-│                        [default: 0.0.0.0]                                              │
+│                        [default: 127.0.0.1]                                            │
 │ --port        INTEGER  Port to bind to                                                 │
 │                        [default: 8100]                                                 │
 ╰────────────────────────────────────────────────────────────────────────────────────────╯

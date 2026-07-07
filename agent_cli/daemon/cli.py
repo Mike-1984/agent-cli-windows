@@ -15,7 +15,7 @@ import typer
 from rich.panel import Panel
 
 from agent_cli.cli import app as main_app
-from agent_cli.core.utils import console, err_console
+from agent_cli.core.utils import console, err_console, redact_cli_args
 from agent_cli.install.service_config import (
     SERVICES,
     ServiceStatus,
@@ -435,7 +435,7 @@ def install_cmd(  # noqa: PLR0912, PLR0915
         console.print()
         console.print(f"[bold]Will install:[/bold] {', '.join(selected_services)}")
         if command_args:
-            console.print(f"[bold]With args:[/bold] {' '.join(command_args)}")
+            console.print(f"[bold]With args:[/bold] {' '.join(redact_cli_args(command_args))}")
         if not _confirm_action("Continue?"):
             console.print("[dim]Cancelled.[/dim]")
             raise typer.Exit(0)

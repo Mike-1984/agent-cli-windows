@@ -33,6 +33,31 @@ SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
 HOURS_PER_DAY = 24
 
+_SENSITIVE_ARG_MARKERS = ("key", "token", "secret", "password")
+
+
+def redact_cli_args(tokens: list[str]) -> list[str]:
+    """Mask values following a sensitive flag (``--foo-key value`` or ``--foo-key=value``)."""
+    redacted: list[str] = []
+    redact_next = False
+    for token in tokens:
+        if redact_next:
+            redacted.append("(redacted)")
+            redact_next = False
+            continue
+        if token.startswith("--") and "=" in token:
+            flag, _, _value = token.partition("=")
+            if any(m in flag.lower() for m in _SENSITIVE_ARG_MARKERS):
+                redacted.append(f"{flag}=(redacted)")
+                continue
+        if token.startswith("--") and any(m in token.lower() for m in _SENSITIVE_ARG_MARKERS):
+            redacted.append(token)
+            redact_next = True
+            continue
+        redacted.append(token)
+    return redacted
+
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Coroutine, Generator, Iterator
     from datetime import timedelta
@@ -583,6 +608,19 @@ async def manage_send_receive_tasks(
     return send_task, recv_task
 
 
+def _format_arg_value(key: str, value: str | int | bool | None) -> str:
+    """Format a single CLI argument value for display, redacting sensitive ones."""
+    if value is None:
+        return "[dim]None[/dim]"
+    if isinstance(value, bool):
+        return "[green]✓[/green]" if value else "[red]✗[/red]"
+    if isinstance(value, str) and not value:
+        return "[dim]<empty>[/dim]"
+    if isinstance(value, str) and any(m in key.lower() for m in _SENSITIVE_ARG_MARKERS):
+        return f"[dim]{value[:4]}...(redacted)[/dim]"
+    return str(value)
+
+
 def print_command_line_args(
     args: dict[str, str | int | bool | None],
 ) -> None:
@@ -617,15 +655,7 @@ def print_command_line_args(
         table.add_row(f"[bold yellow]── {category} ──[/bold yellow]", "", "")
 
         for key, value in items:
-            if value is None:
-                formatted_value = "[dim]None[/dim]"
-            elif isinstance(value, bool):
-                formatted_value = "[green]✓[/green]" if value else "[red]✗[/red]"
-            elif isinstance(value, str) and not value:
-                formatted_value = "[dim]<empty>[/dim]"
-            else:
-                formatted_value = str(value)
-
+            formatted_value = _format_arg_value(key, value)
             type_name = type(value).__name__
             if value is None:
                 type_name = "NoneType"

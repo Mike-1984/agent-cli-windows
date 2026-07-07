@@ -40,6 +40,18 @@ XDG_CONFIG_HOME=/workspace/.config agent-cli chat ...
 
 Config paths are resolved when `agent-cli` starts, so set these variables before invoking the command.
 
+## Storing API keys securely
+
+If you put a real `openai_api_key` or `gemini_api_key` in a config file, prefer the
+user-level path (`~/.config/agent-cli/config.toml`, created by `agent-cli config init`)
+over the project-local `./agent-cli-config.toml`. The project-local file lives inside
+your working directory and is easy to `git add` by accident - `agent-cli-config.toml`
+is gitignored in this repo's own `.gitignore`, but that only protects you here, not in
+your own projects. `agent-cli config init` now creates the file with owner-only (`0600`)
+permissions; if you edited an older file into existence yourself, restrict it with
+`chmod 600 <path>`. When possible, set `OPENAI_API_KEY` / `GEMINI_API_KEY` as environment
+variables instead - they're never written to disk by agent-cli.
+
 ## Managing Configuration
 
 Use the [`config`](commands/config.md) command to manage your configuration files:

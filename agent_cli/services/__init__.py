@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import io
+import logging
 import wave
 from typing import TYPE_CHECKING, Any
 
 from agent_cli import constants
 
 if TYPE_CHECKING:
-    import logging
-
     from openai import AsyncOpenAI
 
     from agent_cli import config
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
 
 _RIFF_HEADER = b"RIFF"
 _LOG_TRUNCATE_LENGTH = 100
+_logger = logging.getLogger(__name__)
 
 
 def _is_wav_file(data: bytes) -> bool:
@@ -184,6 +184,12 @@ def _get_openai_client(api_key: str | None, base_url: str | None = None) -> Asyn
     is used if not provided, since custom endpoints may not require authentication.
     """
     from openai import AsyncOpenAI  # noqa: PLC0415
+
+    if api_key and base_url:
+        _logger.warning(
+            "Sending your API key to custom endpoint %s - only use base URLs you trust.",
+            base_url,
+        )
 
     # Use dummy API key for custom endpoints if none provided
     effective_api_key = api_key or "dummy-api-key"

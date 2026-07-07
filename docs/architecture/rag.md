@@ -363,7 +363,7 @@ File system events trigger incremental updates:
 | `--embedding-model`              | `text-embedding-3-small` | Model for vector embeddings          |
 | `--limit`                        | `3`                      | Default number of chunks to retrieve |
 | `--rag-tools` / `--no-rag-tools` | enabled                  | Enable `read_full_document` tool     |
-| `--host`                         | `0.0.0.0`                | Server bind address                  |
+| `--host`                         | `127.0.0.1`              | Server bind address                  |
 | `--port`                         | `8000`                   | Server bind port                     |
 
 ---

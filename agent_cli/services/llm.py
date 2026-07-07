@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import time
 from typing import TYPE_CHECKING
@@ -11,14 +12,14 @@ from rich.live import Live
 from agent_cli.core.utils import console, live_timer, print_error_message, print_output_panel
 
 if TYPE_CHECKING:
-    import logging
-
     from pydantic_ai import Agent
     from pydantic_ai.models.gemini import GeminiModel
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.tools import Tool
 
     from agent_cli import config
+
+_logger = logging.getLogger(__name__)
 
 
 def _openai_llm_model(openai_cfg: config.OpenAILLM) -> OpenAIChatModel:
@@ -28,6 +29,11 @@ def _openai_llm_model(openai_cfg: config.OpenAILLM) -> OpenAIChatModel:
     # For custom base URLs (like llama-server), API key might not be required
     if openai_cfg.openai_base_url:
         # Custom endpoint - API key is optional
+        if openai_cfg.openai_api_key:
+            _logger.warning(
+                "Sending your API key to custom endpoint %s - only use base URLs you trust.",
+                openai_cfg.openai_base_url,
+            )
         provider = OpenAIProvider(
             api_key=openai_cfg.openai_api_key or "dummy",
             base_url=openai_cfg.openai_base_url,

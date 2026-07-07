@@ -105,7 +105,7 @@ agent-cli chat --openai-base-url http://localhost:8100/v1 --llm-provider openai
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--host` | `0.0.0.0` | Host/IP to bind API servers to. |
+| `--host` | `127.0.0.1` | Host/IP to bind API servers to. |
 | `--port` | `8100` | Port to bind to |
 
 ### General Options

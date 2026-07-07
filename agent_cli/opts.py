@@ -464,7 +464,7 @@ LIVE_PREVIEW_CONSOLE: bool = typer.Option(
 
 # --- Server Options ---
 SERVER_HOST: str = typer.Option(
-    "0.0.0.0",  # noqa: S104
+    "127.0.0.1",
     "--host",
     help="Host/IP to bind API servers to.",
     rich_help_panel="Server Configuration",

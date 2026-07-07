@@ -1,6 +1,9 @@
 # Environment variables
 .env
 
+# agent-cli project-local config (may contain API keys)
+agent-cli-config.toml
+
 # Python
 __pycache__/
 *.py[cod]
@@ -42,6 +45,9 @@ ENV/
 
 # Worktrees directory
 worktrees/
+
+# Scratch notes / working files (not part of the project)
+scratch/
 
 # Submodule
 cli-submodule/
