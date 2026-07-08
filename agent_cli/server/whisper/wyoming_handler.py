@@ -9,10 +9,11 @@ from typing import TYPE_CHECKING
 from wyoming.asr import Transcribe, Transcript
 from wyoming.audio import AudioChunk, AudioChunkConverter, AudioStop
 from wyoming.info import AsrModel, AsrProgram, Attribution, Describe, Info
-from wyoming.server import AsyncEventHandler, AsyncServer
+from wyoming.server import AsyncServer
 
 from agent_cli import constants
 from agent_cli.server.whisper.languages import WHISPER_LANGUAGE_CODES
+from agent_cli.server.wyoming_common import ResilientEventHandler
 from agent_cli.services import pcm_to_wav
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class WyomingWhisperHandler(AsyncEventHandler):
+class WyomingWhisperHandler(ResilientEventHandler):
     """Wyoming event handler for Whisper ASR.
 
     Handles the Wyoming protocol for ASR (Automatic Speech Recognition):

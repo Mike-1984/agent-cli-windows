@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING
 
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.info import Attribution, Describe, Info, TtsProgram, TtsVoice
-from wyoming.server import AsyncEventHandler, AsyncServer
+from wyoming.server import AsyncServer
 from wyoming.tts import Synthesize
 
 from agent_cli import constants
+from agent_cli.server.wyoming_common import ResilientEventHandler
 
 if TYPE_CHECKING:
     from wyoming.event import Event
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class WyomingTTSHandler(AsyncEventHandler):
+class WyomingTTSHandler(ResilientEventHandler):
     """Wyoming event handler for TTS.
 
     Handles the Wyoming protocol for TTS (Text-to-Speech):
