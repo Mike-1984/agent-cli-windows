@@ -142,6 +142,35 @@ class TestWhisperDependencyChecks:
             "nemo-whisper",
         )
 
+    @pytest.mark.parametrize("backend", ["auto", "faster-whisper"])
+    @pytest.mark.parametrize("device", ["cuda", "cuda:0"])
+    def test_resolve_whisper_required_extras_adds_cuda_for_cuda_device(
+        self,
+        backend: str,
+        device: str,
+    ) -> None:
+        """Requesting a CUDA device should also install the cuBLAS/cuDNN runtime."""
+        extras = _resolve_whisper_required_extras({"backend": backend, "device": device})
+        assert "cuda" in extras
+
+    @pytest.mark.parametrize("device", ["auto", "cpu", "mps"])
+    def test_resolve_whisper_required_extras_skips_cuda_for_non_cuda_device(
+        self,
+        device: str,
+    ) -> None:
+        """Non-CUDA devices should not pull in the CUDA runtime extra."""
+        extras = _resolve_whisper_required_extras({"backend": "auto", "device": device})
+        assert "cuda" not in extras
+
+    def test_resolve_whisper_required_extras_skips_cuda_for_non_faster_whisper_backend(
+        self,
+    ) -> None:
+        """Backends that bundle their own CUDA runtime (torch) don't need the extra."""
+        extras = _resolve_whisper_required_extras(
+            {"backend": "transformers", "device": "cuda"},
+        )
+        assert "cuda" not in extras
+
     @pytest.mark.parametrize(
         "model_name",
         [

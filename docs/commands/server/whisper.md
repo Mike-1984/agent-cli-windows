@@ -41,6 +41,10 @@ Run a local ASR server with automatic backend selection based on your platform:
 > ```
 >
 > Use it with any OpenAI-compatible client, or configure agent-cli to use it - see [Configuration](../../configuration.md#using-local-whisper-server).
+>
+> GPU acceleration on Linux/Windows with `--device cuda`: the `cuda` extra
+> (cuBLAS 12 + cuDNN 9) is auto-installed on first run, or install it up front
+> with `pip install "agent-cli[faster-whisper,cuda]"`.
 
 ## Features
 

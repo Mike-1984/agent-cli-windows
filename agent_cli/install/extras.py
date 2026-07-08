@@ -26,7 +26,7 @@ def install_extras(
     extras: Annotated[
         list[str] | None,
         typer.Argument(
-            help="Extras to install: `audio`, `diarization`, `faster-whisper`, `kokoro`, "
+            help="Extras to install: `audio`, `cuda`, `diarization`, `faster-whisper`, `kokoro`, "
             "`llm`, `memory`, `mlx-whisper`, `nemo-whisper`, `piper`, `rag`, `server`, `speed`, "
             "`vad`, `vectordb`, `whisper-transformers`, `wyoming`",
         ),
@@ -52,6 +52,7 @@ def install_extras(
 
     **Available extras:**
     - `audio` - Audio recording/playback
+    - `cuda` - CUDA runtime for GPU inference (cuBLAS 12, cuDNN 9)
     - `diarization` - Speaker diarization (pyannote.audio)
     - `faster-whisper` - Whisper ASR via CTranslate2
     - `kokoro` - Kokoro neural TTS (GPU)

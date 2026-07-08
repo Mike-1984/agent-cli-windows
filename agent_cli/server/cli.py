@@ -290,6 +290,9 @@ def _resolve_whisper_required_extras(kwargs: dict[str, object]) -> tuple[str, ..
         "faster-whisper|mlx-whisper|whisper-transformers",
     )
     extras = ["server", backend_extra]
+    device = str(kwargs.get("device") or "auto")
+    if backend in ("faster-whisper", "auto") and device.startswith("cuda"):
+        extras.append("cuda")
     if not kwargs.get("no_wyoming"):
         extras.append("wyoming")
     return tuple(extras)
