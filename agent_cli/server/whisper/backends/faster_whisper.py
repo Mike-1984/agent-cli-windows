@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import logging
+import os
+import sys
+import sysconfig
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
@@ -39,6 +43,63 @@ class _SubprocessState:
 _state = _SubprocessState()
 
 
+def _prepend_nvidia_dll_dirs() -> None:
+    """Make pip-installed NVIDIA CUDA wheels loadable by CTranslate2 on Windows.
+
+    The nvidia-cublas-cu12 and nvidia-cudnn-cu12 wheels place their DLLs in
+    site-packages/nvidia/*/bin, which is not on the default DLL search path.
+    """
+    if sys.platform != "win32":
+        return
+    site_packages = Path(sysconfig.get_paths()["purelib"])
+    for bin_dir in sorted(site_packages.glob("nvidia/*/bin")):
+        os.add_dll_directory(str(bin_dir))
+        os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+
+
+def _cuda_libs_available() -> bool:
+    """Check that the CUDA libraries CTranslate2 needs (cuBLAS 12, cuDNN 9) can load."""
+    if sys.platform == "win32":
+        libs = ("cublas64_12.dll", "cudnn_ops64_9.dll")
+        # winmode=0 mirrors CTranslate2's LoadLibrary search (includes PATH)
+        kwargs: dict[str, Any] = {"winmode": 0}
+    else:
+        libs = ("libcublas.so.12", "libcudnn_ops.so.9")
+        kwargs = {}
+    try:
+        for lib in libs:
+            ctypes.CDLL(lib, **kwargs)
+    except OSError:
+        return False
+    return True
+
+
+_CUDA_INSTALL_HINT = "Install them with: pip install nvidia-cublas-cu12 nvidia-cudnn-cu12"
+
+
+def _resolve_device(device: str) -> str:
+    """Resolve the requested device, falling back to CPU when CUDA libs are missing."""
+    if device != "auto" and not device.startswith("cuda"):
+        return device
+    _prepend_nvidia_dll_dirs()
+    if _cuda_libs_available():
+        return device
+    if device == "auto":
+        logger.warning(
+            "GPU detected but CUDA libraries (cuBLAS 12 / cuDNN 9) are not "
+            "available; falling back to CPU. %s",
+            _CUDA_INSTALL_HINT,
+        )
+        return "cpu"
+    logger.warning(
+        "Device %s requested but CUDA libraries (cuBLAS 12 / cuDNN 9) were not "
+        "found; model loading will likely fail. %s",
+        device,
+        _CUDA_INSTALL_HINT,
+    )
+    return device
+
+
 # --- Subprocess worker functions (run in isolated process) ---
 
 
@@ -50,6 +111,8 @@ def _load_model_in_subprocess(
     download_root: str | None,
 ) -> str:
     """Load model in subprocess. Returns actual device string."""
+    device = _resolve_device(device)
+
     from faster_whisper import WhisperModel  # noqa: PLC0415
 
     set_process_title("whisper-faster")

@@ -57,6 +57,12 @@ diarization = ["pyannote-audio>=3.3"]
 
 # ASR backends
 faster-whisper = ["agent-cli[server]", "faster-whisper>=1.0.0", "ctranslate2>=4.6.2"]
+# CUDA runtime libraries for faster-whisper GPU inference (cuBLAS 12 + cuDNN 9,
+# per https://github.com/SYSTRAN/faster-whisper#gpu)
+cuda = [
+    "nvidia-cublas-cu12>=12; sys_platform != 'darwin'",
+    "nvidia-cudnn-cu12>=9; sys_platform != 'darwin'",
+]
 mlx-whisper = [
     "agent-cli[server]; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "mlx-whisper>=0.4.0; sys_platform == 'darwin' and platform_machine == 'arm64'",

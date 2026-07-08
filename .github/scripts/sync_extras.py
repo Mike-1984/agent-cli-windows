@@ -47,6 +47,8 @@ EXTRA_METADATA: dict[str, tuple[str, list[str]]] = {
     "speed": ("Audio speed adjustment (audiostretchy)", ["audiostretchy"]),
     # Whisper backends
     "faster-whisper": ("Whisper ASR via CTranslate2", ["faster_whisper"]),
+    "cuda": ("CUDA runtime for GPU inference (cuBLAS 12, cuDNN 9)", ["nvidia.cublas"]),
+    "nemo-whisper": ("Whisper ASR via NVIDIA NeMo", ["nemo"]),
     "mlx-whisper": ("Whisper ASR for Apple Silicon", ["mlx_whisper"]),
     "whisper-transformers": (
         "Whisper ASR via HuggingFace transformers",
