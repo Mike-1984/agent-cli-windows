@@ -344,20 +344,41 @@ def _wait_for_process_start(
 
 
 def _signal_running_process(process_name: str, pid: int) -> None:
-    """Signal a known-running process and clean control files if it exits."""
+    """Ask a known-running process to stop, escalating to a hard kill if needed.
+
+    A leftover stop file means a previous call already asked this process to
+    shut down gracefully and it is still running, so this call escalates to
+    an unconditional kill instead of asking again.
+
+    On Windows, os.kill(pid, sig) can only deliver a *catchable* signal for
+    signal.CTRL_C_EVENT / CTRL_BREAK_EVENT (and those require a shared
+    console/process group, which a hotkey-launched background process does
+    not have). Any other value -- including SIGINT -- makes CPython call
+    TerminateProcess() immediately, which kills the process without ever
+    running its registered signal handler. Verified empirically: a child
+    process with a signal.signal(SIGINT, ...) handler installed is killed
+    outright, with the handler never invoked. So on Windows the stop file
+    (polled via InteractiveStopEvent.is_set()) is the *only* graceful
+    mechanism, and a real kill signal must be reserved for the escalation
+    path below.
+    """
     stop_file = _get_stop_file(process_name)
-    should_force_kill = sys.platform != "win32" and stop_file.exists()
+    should_force_kill = stop_file.exists()
+    stop_file.touch()
 
-    # On Windows, create stop file to signal graceful shutdown
-    if sys.platform == "win32":
-        stop_file.touch()
+    if should_force_kill:
+        kill_signal: signal.Signals | None = (
+            signal.SIGTERM if sys.platform == "win32" else signal.SIGKILL
+        )
+    elif sys.platform == "win32":
+        kill_signal = None
+    else:
+        kill_signal = signal.SIGINT
 
-    # Send SIGINT first; escalate to SIGKILL only when the same PID survives
-    # repeated stop attempts beyond the configured timeout.
-    stop_signal = signal.SIGKILL if should_force_kill else signal.SIGINT
     process_stopped = False
     try:
-        os.kill(pid, stop_signal)
+        if kill_signal is not None:
+            os.kill(pid, kill_signal)
         # Wait for process to terminate
         for _ in range(10):  # 1 second max
             if not _is_pid_running(pid):
@@ -367,15 +388,12 @@ def _signal_running_process(process_name: str, pid: int) -> None:
     except (ProcessLookupError, PermissionError):
         process_stopped = not _is_pid_running(pid)
 
-    # Clean up
-    if sys.platform == "win32":
-        clear_stop_file(process_name)
     # Keep PID file if process is still alive so subsequent --status/--toggle
     # calls continue targeting the same process.
     if process_stopped:
         _cleanup_process_files(process_name)
-    elif not should_force_kill:
-        stop_file.touch()
+    # else: leave the stop file in place. The target keeps shutting down
+    # gracefully on its own schedule, and a repeat --stop call escalates.
 
 
 def stop_process(

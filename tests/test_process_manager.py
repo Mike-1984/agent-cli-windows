@@ -468,7 +468,16 @@ def test_stop_process_creates_stop_file_on_windows(
     temp_pid_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that stop_process creates a stop file on Windows for graceful shutdown."""
+    """A first --stop on Windows must ask gracefully via the stop file, not kill.
+
+    os.kill(pid, SIGINT) on Windows calls TerminateProcess() immediately instead
+    of invoking the target's registered signal handler (verified empirically: a
+    real child process with a signal.signal(SIGINT, ...) handler is killed with
+    the handler never firing). So the first stop attempt must rely solely on the
+    stop file -- polled by the target via InteractiveStopEvent.is_set() -- and
+    must not send any kill signal, or the target is destroyed before it can
+    finish transcribing/copying its result.
+    """
     process_name = "test-process"
     pid_file = temp_pid_dir / f"{process_name}.pid"
     stop_file = temp_pid_dir / f"{process_name}.stop"
@@ -492,15 +501,67 @@ def test_stop_process_creates_stop_file_on_windows(
     with (
         patch.object(process, "_is_pid_running", side_effect=[True, False]),
         patch.object(Path, "touch", tracking_touch),
-        patch("os.kill"),
+        patch("os.kill") as mock_os_kill,
     ):
         process.stop_process(process_name)
 
     # Verify stop file was created during the call
     assert stop_file_created
-    # Stop file should be cleaned up after kill
+    # The first attempt must be purely graceful: no kill signal sent.
+    mock_os_kill.assert_not_called()
+    # Stop file should be cleaned up once the process exits on its own
     assert not stop_file.exists()
     assert not pid_file.exists()
+
+
+def test_stop_process_windows_first_attempt_leaves_still_running_process_alone(
+    temp_pid_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A first --stop on Windows must not kill a process that is still busy shutting down."""
+    process_name = "test-process"
+    pid_file = temp_pid_dir / f"{process_name}.pid"
+    stop_file = temp_pid_dir / f"{process_name}.stop"
+    pid_file.write_text("12345")
+
+    monkeypatch.setattr(process.sys, "platform", "win32")
+    with (
+        patch.object(process, "_is_pid_running", return_value=True),
+        patch("time.sleep", return_value=None),
+        patch("os.kill") as mock_os_kill,
+    ):
+        result = process.stop_process(process_name)
+
+    mock_os_kill.assert_not_called()
+    assert result.was_running is True
+    # Left running: control files must survive so a repeat --stop can escalate.
+    assert pid_file.exists()
+    assert stop_file.exists()
+
+
+def test_stop_process_windows_escalates_to_terminate_on_second_stop_request(
+    temp_pid_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second --stop on Windows, after a stop file is already pending, forces a kill."""
+    process_name = "test-process"
+    pid_file = temp_pid_dir / f"{process_name}.pid"
+    stop_file = temp_pid_dir / f"{process_name}.stop"
+    pid_file.write_text("12345")
+    stop_file.write_text("1")  # left behind by a prior graceful attempt
+
+    monkeypatch.setattr(process.sys, "platform", "win32")
+    with (
+        patch.object(process, "_is_pid_running", side_effect=[True, False]),
+        patch("time.sleep", return_value=None),
+        patch("os.kill") as mock_os_kill,
+    ):
+        result = process.stop_process(process_name)
+
+    mock_os_kill.assert_any_call(12345, signal.SIGTERM)
+    assert result.was_running is True
+    assert not pid_file.exists()
+    assert not stop_file.exists()
 
 
 def test_stop_file_functions(temp_pid_dir: Path) -> None:
