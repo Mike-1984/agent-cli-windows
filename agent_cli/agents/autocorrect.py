@@ -7,6 +7,7 @@ import contextlib
 import json
 import sys
 import time
+from pathlib import Path  # noqa: TC003
 from typing import TYPE_CHECKING
 
 import typer
@@ -81,6 +82,8 @@ async def _process_text(
     ollama_cfg: config.Ollama,
     openai_llm_cfg: config.OpenAILLM,
     gemini_llm_cfg: config.GeminiLLM,
+    system_prompt: str = SYSTEM_PROMPT,
+    instructions: str = AGENT_INSTRUCTIONS,
 ) -> tuple[str, float]:
     """Process text with the LLM and return the corrected text and elapsed time."""
     agent = create_llm_agent(
@@ -88,8 +91,8 @@ async def _process_text(
         ollama_cfg=ollama_cfg,
         openai_cfg=openai_llm_cfg,
         gemini_cfg=gemini_llm_cfg,
-        system_prompt=SYSTEM_PROMPT,
-        instructions=AGENT_INSTRUCTIONS,
+        system_prompt=system_prompt,
+        instructions=instructions,
     )
 
     # Format the input using the template to clearly separate text from instructions
@@ -161,6 +164,8 @@ async def _async_autocorrect(
     openai_llm_cfg: config.OpenAILLM,
     gemini_llm_cfg: config.GeminiLLM,
     general_cfg: config.General,
+    system_prompt: str = SYSTEM_PROMPT,
+    instructions: str = AGENT_INSTRUCTIONS,
 ) -> str | None:
     """Asynchronous version of the autocorrect command."""
     setup_logging(general_cfg.log_level, general_cfg.log_file, quiet=general_cfg.quiet)
@@ -185,6 +190,8 @@ async def _async_autocorrect(
                 ollama_cfg,
                 openai_llm_cfg,
                 gemini_llm_cfg,
+                system_prompt=system_prompt,
+                instructions=instructions,
             )
 
         _display_result(
@@ -232,6 +239,9 @@ def autocorrect(
     # Gemini
     llm_gemini_model: str = opts.LLM_GEMINI_MODEL,
     gemini_api_key: str | None = opts.GEMINI_API_KEY,
+    # --- Prompt Customization ---
+    system_prompt_file: Path | None = opts.SYSTEM_PROMPT_FILE,
+    instructions_file: Path | None = opts.INSTRUCTIONS_FILE,
     # --- General Options ---
     log_level: opts.LogLevel = opts.LOG_LEVEL,
     log_file: str | None = opts.LOG_FILE,
@@ -265,6 +275,9 @@ def autocorrect(
 
     # Get JSON output for scripting (disables clipboard)
     agent-cli autocorrect --json
+
+    # Use custom prompts loaded from files
+    agent-cli autocorrect --system-prompt-file ./prompt.txt --instructions-file ./instr.txt
     ```
     """
     if print_args:
@@ -273,6 +286,13 @@ def autocorrect(
     effective_quiet = quiet or json_output
     if json_output:
         enable_json_mode()
+
+    system_prompt = (
+        system_prompt_file.read_text(encoding="utf-8") if system_prompt_file else SYSTEM_PROMPT
+    )
+    instructions = (
+        instructions_file.read_text(encoding="utf-8") if instructions_file else AGENT_INSTRUCTIONS
+    )
 
     provider_cfg = config.ProviderSelection(
         llm_provider=llm_provider,
@@ -304,6 +324,8 @@ def autocorrect(
             openai_llm_cfg=openai_llm_cfg,
             gemini_llm_cfg=gemini_llm_cfg,
             general_cfg=general_cfg,
+            system_prompt=system_prompt,
+            instructions=instructions,
         ),
     )
     if json_output:

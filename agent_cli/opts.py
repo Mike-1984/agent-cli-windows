@@ -470,6 +470,26 @@ SERVER_HOST: str = typer.Option(
     rich_help_panel="Server Configuration",
 )
 
+# --- Prompt Customization Options ---
+SYSTEM_PROMPT_FILE: Path | None = typer.Option(
+    None,
+    "--system-prompt-file",
+    help="Path to a file whose contents replace the built-in system prompt.",
+    exists=True,
+    dir_okay=False,
+    readable=True,
+    rich_help_panel="Prompt Customization",
+)
+INSTRUCTIONS_FILE: Path | None = typer.Option(
+    None,
+    "--instructions-file",
+    help="Path to a file whose contents replace the built-in agent instructions.",
+    exists=True,
+    dir_okay=False,
+    readable=True,
+    rich_help_panel="Prompt Customization",
+)
+
 # --- Transcribe Specific Options ---
 FROM_FILE: Path | None = typer.Option(
     None,

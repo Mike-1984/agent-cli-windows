@@ -68,6 +68,13 @@ agent-cli autocorrect "this text has an eror"
 | `--llm-gemini-model` | `gemini-3-flash-preview` | The Gemini model to use for LLM tasks. |
 | `--gemini-api-key` | - | Your Gemini API key. Can also be set with the GEMINI_API_KEY environment variable. |
 
+### Prompt Customization
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--system-prompt-file` | - | Path to a file whose contents replace the built-in system prompt. |
+| `--instructions-file` | - | Path to a file whose contents replace the built-in agent instructions. |
+
 ### General Options
 
 | Option | Default | Description |

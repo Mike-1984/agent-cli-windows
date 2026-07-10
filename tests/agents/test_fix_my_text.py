@@ -154,6 +154,47 @@ async def test_process_text_integration(mock_create_llm_agent: MagicMock) -> Non
 
 @pytest.mark.asyncio
 @patch("agent_cli.agents.autocorrect.create_llm_agent")
+async def test_process_text_custom_prompts(mock_create_llm_agent: MagicMock) -> None:
+    """Custom system prompt and instructions are forwarded to the agent."""
+    mock_agent = MagicMock()
+    mock_result = MagicMock()
+    mock_result.output = "corrected"
+    mock_agent.run = AsyncMock(return_value=mock_result)
+    mock_create_llm_agent.return_value = mock_agent
+
+    provider_cfg = config.ProviderSelection(
+        llm_provider="ollama",
+        asr_provider="wyoming",
+        tts_provider="wyoming",
+    )
+    ollama_cfg = config.Ollama(llm_ollama_model="test-model", llm_ollama_host="test")
+    openai_llm_cfg = config.OpenAILLM(
+        llm_openai_model=DEFAULT_OPENAI_MODEL,
+        openai_api_key=None,
+        openai_base_url=None,
+    )
+    gemini_llm_cfg = config.GeminiLLM(
+        llm_gemini_model="gemini-1.5-flash",
+        gemini_api_key="test-key",
+    )
+
+    await autocorrect._process_text(
+        "this is text",
+        provider_cfg,
+        ollama_cfg,
+        openai_llm_cfg,
+        gemini_llm_cfg,
+        system_prompt="CUSTOM SYSTEM",
+        instructions="CUSTOM INSTRUCTIONS",
+    )
+
+    _, kwargs = mock_create_llm_agent.call_args
+    assert kwargs["system_prompt"] == "CUSTOM SYSTEM"
+    assert kwargs["instructions"] == "CUSTOM INSTRUCTIONS"
+
+
+@pytest.mark.asyncio
+@patch("agent_cli.agents.autocorrect.create_llm_agent")
 @patch("agent_cli.agents.autocorrect.get_clipboard_text")
 async def test_autocorrect_command_with_text(
     mock_get_clipboard: MagicMock,
