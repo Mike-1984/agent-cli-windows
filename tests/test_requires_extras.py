@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import os
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -18,6 +19,7 @@ from agent_cli.core.deps import (
     _find_runtime_uv,
     _get_auto_install_setting,
     _get_install_hint,
+    _install_extras_in_place_on_windows,
     _install_via_uv_tool,
     _maybe_reexec_after_install,
     _maybe_reexec_with_uvx,
@@ -26,6 +28,7 @@ from agent_cli.core.deps import (
     get_combined_install_hint,
     install_extras_impl,
     requires_extras,
+    uv_tool_install_would_replace_running_files,
 )
 
 
@@ -455,6 +458,73 @@ class TestCheckAndInstallExtras:
             assert result == ["fake-extra"]
             mock_error.assert_called_once()
             assert "not visible" in mock_error.call_args[0][0]
+
+
+class TestWindowsInPlaceExtrasInstall:
+    """A `uv tool` install always runs from the venv it would replace.
+
+    On Windows, rebuilding that venv (`uv tool install --force` deletes it
+    first) can fail if this process - or an unrelated long-lived `agent-cli
+    server`/`--toggle` background process sharing the same install - is
+    holding its exe/DLLs open, corrupting the install part-way through.
+    Installing extras directly into the running interpreter's site-packages
+    sidesteps the rebuild, and the delete, entirely.
+    """
+
+    def test_would_replace_running_files_true_on_windows_uv_tool_install(self) -> None:
+        """A `uv tool` install on Windows always targets its own running files."""
+        with (
+            patch("sys.platform", "win32"),
+            patch("agent_cli.core.deps.is_uv_tool_install", return_value=True),
+        ):
+            assert uv_tool_install_would_replace_running_files() is True
+
+    def test_would_replace_running_files_false_off_windows(self) -> None:
+        """macOS/Linux can remove a running exe, so no workaround is needed there."""
+        with (
+            patch("sys.platform", "linux"),
+            patch("agent_cli.core.deps.is_uv_tool_install", return_value=True),
+        ):
+            assert uv_tool_install_would_replace_running_files() is False
+
+    def test_would_replace_running_files_false_when_not_a_uv_tool_install(self) -> None:
+        """A plain pip install doesn't touch a running venv, even on Windows."""
+        with (
+            patch("sys.platform", "win32"),
+            patch("agent_cli.core.deps.is_uv_tool_install", return_value=False),
+        ):
+            assert uv_tool_install_would_replace_running_files() is False
+
+    def test_install_via_uv_tool_installs_in_place_on_windows(self) -> None:
+        """Rebuilding the venv in-place would risk corrupting it, so install directly instead."""
+        with (
+            patch(
+                "agent_cli.core.deps.uv_tool_install_would_replace_running_files",
+                return_value=True,
+            ),
+            patch("agent_cli.core.deps._find_runtime_uv", return_value="/fake/uv"),
+            patch("agent_cli.core.deps._pip_install_extras", return_value=True) as mock_pip,
+            patch("agent_cli.core.deps.subprocess.run") as mock_run,
+        ):
+            assert _install_via_uv_tool(["cuda"], quiet=True) is True
+
+        mock_run.assert_not_called()  # never runs `uv tool install --force`
+        mock_pip.assert_called_once()
+        extras_arg, cmd_arg = mock_pip.call_args.args
+        assert extras_arg == ["cuda"]
+        assert cmd_arg == ["/fake/uv", "pip", "install", "--python", sys.executable]
+        assert mock_pip.call_args.kwargs == {"quiet": True}
+
+    def test_in_place_install_falls_back_to_uv_on_path_when_runtime_uv_missing(self) -> None:
+        """Even without a resolved uv path, the plain `uv` command name must still work."""
+        with (
+            patch("agent_cli.core.deps._find_runtime_uv", return_value=None),
+            patch("agent_cli.core.deps._pip_install_extras", return_value=True) as mock_pip,
+        ):
+            assert _install_extras_in_place_on_windows(["vad"], quiet=True) is True
+
+        cmd_arg = mock_pip.call_args.args[1]
+        assert cmd_arg == ["uv", "pip", "install", "--python", sys.executable]
 
 
 class TestReexecBehavior:

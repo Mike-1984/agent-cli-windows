@@ -245,6 +245,10 @@ def _get_current_uv_tool_extras() -> list[str]:
 def _install_via_uv_tool(extras: list[str], *, quiet: bool = False) -> bool:
     """Reinstall agent-cli via uv tool with the specified extras."""
     extras = sorted(set(extras))
+
+    if uv_tool_install_would_replace_running_files():
+        return _install_extras_in_place_on_windows(extras, quiet=quiet)
+
     extras_str = ",".join(extras)
     package_spec = f"agent-cli[{extras_str}]"
     # Cap at Python 3.13 for compatibility - onnxruntime doesn't support 3.14 yet
@@ -259,6 +263,41 @@ def _install_via_uv_tool(extras: list[str], *, quiet: bool = False) -> bool:
     err_console.print(f"Running: [cyan]{cmd_str}[/]")
     result = subprocess.run(cmd, check=False)
     return result.returncode == 0
+
+
+def uv_tool_install_would_replace_running_files() -> bool:
+    """Return True when a full reinstall would try to delete this venv's own files.
+
+    `uv tool install --force` deletes the old tool venv before writing the new
+    one. A `uv tool` install always runs from the exact venv it would replace,
+    and on Windows any process using that venv - this one, or an unrelated
+    long-lived `agent-cli server`/`--toggle` background process sharing the
+    same install - keeps its exe/DLLs locked. That makes the delete fail
+    part-way through and corrupts the install (uv's removal isn't
+    transactional). macOS/Linux allow removing open files, so only Windows
+    needs the safer in-place install below.
+    """
+    return sys.platform == "win32" and is_uv_tool_install()
+
+
+def _install_extras_in_place_on_windows(extras: list[str], *, quiet: bool = False) -> bool:
+    """Add extras directly into the running venv instead of rebuilding it.
+
+    This sidesteps the Windows file-lock problem entirely: it only adds
+    packages under site-packages rather than deleting/replacing the
+    interpreter and entry-point exes, so it works even while this or another
+    agent-cli process is using the same venv. The tradeoff is that a future
+    `uv tool upgrade agent-cli` (which does rebuild the venv from the
+    persisted receipt) won't know about these extras - rerun `install-extras`
+    after upgrading if that happens.
+    """
+    if not quiet:
+        err_console.print(
+            "[yellow]Installing directly into the running environment "
+            "(Windows can't safely rebuild it while it's in use).[/]",
+        )
+    cmd = [_find_runtime_uv() or "uv", "pip", "install", "--python", sys.executable]
+    return _pip_install_extras(extras, cmd, quiet=quiet)
 
 
 def _install_cmd() -> list[str]:
@@ -362,14 +401,8 @@ def _uv_tool_extra_args(
     return args
 
 
-def install_extras_impl(extras: list[str], *, quiet: bool = False) -> bool:
-    """Install extras. Returns True on success, False on failure."""
-    if is_uv_tool_install():
-        current_extras = _get_current_uv_tool_extras()
-        new_extras = sorted(set(current_extras) | set(extras))
-        return _install_via_uv_tool(new_extras, quiet=quiet)
-
-    cmd = _install_cmd()
+def _pip_install_extras(extras: list[str], cmd: list[str], *, quiet: bool) -> bool:
+    """Install each extra's pinned requirements with `cmd` (a pip-install-style prefix)."""
     for extra in extras:
         req_file = _requirements_path(extra)
         if not quiet:
@@ -388,6 +421,16 @@ def install_extras_impl(extras: list[str], *, quiet: bool = False) -> bool:
         if result.returncode != 0:
             return False
     return True
+
+
+def install_extras_impl(extras: list[str], *, quiet: bool = False) -> bool:
+    """Install extras. Returns True on success, False on failure."""
+    if is_uv_tool_install():
+        current_extras = _get_current_uv_tool_extras()
+        new_extras = sorted(set(current_extras) | set(extras))
+        return _install_via_uv_tool(new_extras, quiet=quiet)
+
+    return _pip_install_extras(extras, _install_cmd(), quiet=quiet)
 
 
 def _install_extras_programmatic(extras: list[str], *, quiet: bool = False) -> bool:

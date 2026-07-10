@@ -14,6 +14,7 @@ from agent_cli.core.deps import (
     available_extras,
     install_extras_impl,
     is_uv_tool_install,
+    uv_tool_install_would_replace_running_files,
 )
 from agent_cli.core.utils import console, print_error_message
 
@@ -102,7 +103,13 @@ def install_extras(
         print_error_message("Failed to install extras")
         raise typer.Exit(1)
 
-    if is_uv_tool_install():
+    if uv_tool_install_would_replace_running_files():
+        console.print(
+            "[green]Done![/] These extras are active immediately, but on Windows they "
+            "won't survive a future [cyan]uv tool upgrade agent-cli[/] "
+            "(rerun this command afterward if that happens).",
+        )
+    elif is_uv_tool_install():
         console.print("[green]Done! Extras will persist across uv tool upgrade.[/]")
     else:
         console.print("[green]Done![/]")
