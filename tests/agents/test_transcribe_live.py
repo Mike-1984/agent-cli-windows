@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
 import json
 import platform
 from datetime import UTC, datetime
@@ -10,15 +12,24 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from agent_cli import config
+from agent_cli import config, constants
 from agent_cli.agents.transcribe_live import (
     _DEFAULT_AUDIO_DIR,
     _DEFAULT_LOG_FILE,
     _MIN_SEGMENT_DURATION_SECONDS,
+    _MSG_BYE,
+    _MSG_LISTENING,
+    _MSG_PROCESSING,
+    _MSG_READY,
+    _TRANSCRIPT_BEGIN,
+    _TRANSCRIPT_END,
     DaemonConfig,
     _generate_audio_path,
     _log_segment,
+    _next_stdio_action,
     _process_segment,
+    _segment_duration_seconds,
+    _stdio_daemon_loop,
     transcribe_live,
 )
 
@@ -190,9 +201,8 @@ async def test_process_segment_skips_short_segments(
     daemon_config: DaemonConfig,
 ) -> None:
     """Test that _process_segment skips segments shorter than minimum duration."""
-    # Configure VAD to return short duration (vad is a MagicMock in tests)
-    daemon_config.vad.get_segment_duration_seconds.return_value = 0.1  # type: ignore[attr-defined]
-
+    # Duration is derived from the byte length: 1000 bytes = 500 samples ≈ 0.03s,
+    # which is below _MIN_SEGMENT_DURATION_SECONDS (0.3s).
     timestamp = datetime.now(UTC)
     segment = b"\x00" * 1000
 
@@ -458,3 +468,149 @@ def test_generate_audio_path_includes_milliseconds(tmp_path: Path) -> None:
 
     # Should include milliseconds in filename
     assert "567" in path.name
+
+
+# --- stdio push-to-talk mode ---
+
+
+def test_segment_duration_seconds() -> None:
+    """Duration is derived from byte length, sample width, and rate."""
+    # 1 second of 16-bit mono audio = AUDIO_RATE samples * 2 bytes.
+    one_second = b"\x00" * (constants.AUDIO_RATE * constants.AUDIO_FORMAT_WIDTH)
+    assert _segment_duration_seconds(one_second) == 1.0
+    assert _segment_duration_seconds(b"") == 0.0
+
+
+@pytest.mark.parametrize(
+    ("command", "listening", "expected"),
+    [
+        # start / toggle from idle begins listening
+        ("start", False, ("start", True)),
+        ("toggle", False, ("start", True)),
+        # stop / toggle while listening finalizes
+        ("stop", True, ("stop", False)),
+        ("toggle", True, ("stop", False)),
+        # quit is honored in either state, preserving current listening flag
+        ("quit", False, ("quit", False)),
+        ("quit", True, ("quit", True)),
+        ("exit", False, ("quit", False)),
+        # redundant transitions keep state without action
+        ("start", True, ("noop", True)),
+        ("stop", False, ("noop", False)),
+        # anything else is unknown
+        ("frobnicate", False, ("unknown", False)),
+    ],
+)
+def test_next_stdio_action(
+    command: str,
+    listening: bool,
+    expected: tuple[str, bool],
+) -> None:
+    """The command state machine maps (command, state) to (action, new state)."""
+    assert _next_stdio_action(command, listening=listening) == expected
+
+
+@pytest.mark.asyncio
+async def test_process_segment_returns_final_text(
+    daemon_config: DaemonConfig,
+) -> None:
+    """_process_segment returns the raw transcript when the LLM is disabled."""
+    segment = b"\x00" * 32000  # 1 second
+
+    mock_transcriber = AsyncMock(return_value="Hello world")
+    with patch(
+        "agent_cli.agents.transcribe_live.create_recorded_audio_transcriber",
+        return_value=mock_transcriber,
+    ):
+        result = await _process_segment(daemon_config, segment, datetime.now(UTC))
+
+    assert result == "Hello world"
+
+
+@pytest.mark.asyncio
+async def test_process_segment_returns_none_for_short_segment(
+    daemon_config: DaemonConfig,
+) -> None:
+    """Segments below the minimum duration return None (nothing transcribed)."""
+    segment = b"\x00" * 100  # far below _MIN_SEGMENT_DURATION_SECONDS
+    result = await _process_segment(daemon_config, segment, datetime.now(UTC))
+    assert result is None
+
+
+def _fake_audio_stream() -> MagicMock:
+    """A stand-in sounddevice stream whose read() yields silent PCM chunks."""
+    fake_data = MagicMock()
+    fake_data.tobytes.return_value = b"\x00" * constants.AUDIO_CHUNK_SIZE
+    stream = MagicMock()
+    stream.read.return_value = (fake_data, None)
+    context = MagicMock()
+    context.__enter__.return_value = stream
+    context.__exit__.return_value = False
+    return context
+
+
+@pytest.mark.asyncio
+async def test_stdio_daemon_loop_start_stop_cycle(
+    daemon_config: DaemonConfig,
+) -> None:
+    """A start/stop cycle over stdin emits the protocol events and the transcript."""
+    daemon_config.vad = None
+    commands = io.StringIO("start\nstop\n")  # EOF after stop triggers quit
+    out = io.StringIO()
+    fake_ctx = _fake_audio_stream()
+
+    with (
+        patch("agent_cli.agents.transcribe_live.setup_input_stream", return_value=MagicMock()),
+        patch(
+            "agent_cli.agents.transcribe_live.open_audio_stream",
+            return_value=fake_ctx,
+        ),
+        patch(
+            "agent_cli.agents.transcribe_live._process_segment",
+            AsyncMock(return_value="hello world"),
+        ),
+        patch("sys.stdin", commands),
+        patch("sys.stdout", out),
+    ):
+        await asyncio.wait_for(_stdio_daemon_loop(daemon_config), timeout=5.0)
+
+    lines = [line for line in out.getvalue().splitlines() if line]
+    assert lines[0] == _MSG_READY
+    assert _MSG_LISTENING in lines
+    assert _MSG_PROCESSING in lines
+    assert lines[-1] == _MSG_BYE
+    # Transcript is delivered between the sentinels.
+    begin = lines.index(_TRANSCRIPT_BEGIN)
+    end = lines.index(_TRANSCRIPT_END)
+    assert lines[begin + 1 : end] == ["hello world"]
+    # The mic is opened on start and released on stop.
+    fake_ctx.__enter__.assert_called_once()
+    fake_ctx.__exit__.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stdio_daemon_loop_unknown_command(
+    daemon_config: DaemonConfig,
+) -> None:
+    """Unknown commands are reported without stopping the daemon."""
+    daemon_config.vad = None
+    commands = io.StringIO("wat\nquit\n")
+    out = io.StringIO()
+    fake_ctx = _fake_audio_stream()
+
+    with (
+        patch("agent_cli.agents.transcribe_live.setup_input_stream", return_value=MagicMock()),
+        patch(
+            "agent_cli.agents.transcribe_live.open_audio_stream",
+            return_value=fake_ctx,
+        ),
+        patch("sys.stdin", commands),
+        patch("sys.stdout", out),
+    ):
+        await asyncio.wait_for(_stdio_daemon_loop(daemon_config), timeout=5.0)
+
+    output = out.getvalue()
+    assert "ERROR unknown command: wat" in output
+    assert output.strip().endswith(_MSG_BYE)
+    # Without a start command the microphone is never opened.
+    fake_ctx.__enter__.assert_not_called()

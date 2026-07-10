@@ -7,6 +7,8 @@ import json
 import logging
 import platform
 import signal
+import sys
+import threading
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -44,13 +46,30 @@ _DEFAULT_AUDIO_DIR = Path.home() / ".config" / "agent-cli" / "audio"
 _DEFAULT_LOG_FILE = Path.home() / ".config" / "agent-cli" / "transcriptions.jsonl"
 _MIN_SEGMENT_DURATION_SECONDS = 0.3
 
+# --- stdio push-to-talk protocol (see `transcribe-live --stdio`) ---
+# Commands accepted on stdin (one per line, case-insensitive):
+#   start | stop | toggle | quit (aliases: exit)
+# Events written to stdout (one per line). The transcript itself is wrapped in
+# BEGIN/END sentinels because it may span multiple lines.
+_MSG_READY = "READY"  # idle, waiting for a command
+_MSG_LISTENING = "LISTENING"  # microphone is being buffered
+_MSG_PROCESSING = "PROCESSING"  # buffered audio is being transcribed
+_MSG_BYE = "BYE"  # daemon is shutting down
+_TRANSCRIPT_BEGIN = "TRANSCRIPT_BEGIN"
+_TRANSCRIPT_END = "TRANSCRIPT_END"
+
+
+def _segment_duration_seconds(segment: bytes) -> float:
+    """Duration of a 16-bit mono PCM segment at the capture sample rate."""
+    return len(segment) // constants.AUDIO_FORMAT_WIDTH / constants.AUDIO_RATE
+
 
 @dataclass
 class DaemonConfig:
     """Bundle of all daemon configuration."""
 
     role: str
-    vad: VoiceActivityDetector
+    vad: VoiceActivityDetector | None
     input_device_index: int | None
     provider: config.ProviderSelection
     wyoming_asr: config.WyomingASR
@@ -106,12 +125,16 @@ async def _process_segment(  # noqa: PLR0912
     cfg: DaemonConfig,
     segment: bytes,
     timestamp: datetime,
-) -> None:
-    """Process a speech segment: transcribe, optionally LLM-clean, and log."""
-    duration = cfg.vad.get_segment_duration_seconds(segment)
+) -> str | None:
+    """Process a speech segment: transcribe, optionally LLM-clean, and log.
+
+    Returns the final text (LLM-cleaned if `--llm`, else the raw transcript),
+    or None when the segment is too short or nothing was transcribed.
+    """
+    duration = _segment_duration_seconds(segment)
     if duration < _MIN_SEGMENT_DURATION_SECONDS:
         LOGGER.debug("Skipping very short segment: %.2fs", duration)
-        return
+        return None
 
     # Save audio as MP3 if requested (run in thread to avoid blocking event loop)
     audio_path: Path | None = None
@@ -144,7 +167,7 @@ async def _process_segment(  # noqa: PLR0912
         LOGGER.debug("Empty transcript, skipping")
         if not cfg.quiet:
             console.print("[green]👂 Listening...[/green]" + " " * 20, end="\r")
-        return
+        return None
 
     if not cfg.quiet:
         console.print(" " * 50, end="\r")
@@ -210,11 +233,14 @@ async def _process_segment(  # noqa: PLR0912
     if not cfg.quiet:
         console.print("[green]👂 Listening...[/green]" + " " * 20, end="\r")
 
+    return processed or transcript
+
 
 async def _daemon_loop(cfg: DaemonConfig) -> None:  # noqa: PLR0912, PLR0915
     """Main daemon loop: continuously capture audio and process speech segments."""
+    assert cfg.vad is not None, "VAD is required for the continuous daemon loop"
     stream_config = setup_input_stream(cfg.input_device_index)
-    background_tasks: set[asyncio.Task[None]] = set()
+    background_tasks: set[asyncio.Task[str | None]] = set()
 
     if not cfg.quiet:
         print_with_style("🎙️ Transcribe daemon started. Listening...", style="green")
@@ -257,7 +283,7 @@ async def _daemon_loop(cfg: DaemonConfig) -> None:  # noqa: PLR0912, PLR0915
 
                 if segment:
                     timestamp = datetime.now(UTC).astimezone()
-                    duration = cfg.vad.get_segment_duration_seconds(segment)
+                    duration = _segment_duration_seconds(segment)
 
                     if not cfg.quiet:
                         console.print(
@@ -287,11 +313,200 @@ async def _daemon_loop(cfg: DaemonConfig) -> None:  # noqa: PLR0912, PLR0915
                     await asyncio.wait(background_tasks, timeout=2.0)
 
 
+def _emit(message: str) -> None:
+    """Write a single protocol line to stdout for the controlling parent process."""
+    sys.stdout.write(message + "\n")
+    sys.stdout.flush()
+
+
+def _emit_transcript(text: str) -> None:
+    """Write a (possibly multi-line) transcript wrapped in BEGIN/END sentinels."""
+    _emit(_TRANSCRIPT_BEGIN)
+    sys.stdout.write(text + "\n")
+    sys.stdout.flush()
+    _emit(_TRANSCRIPT_END)
+
+
+def _next_stdio_action(command: str, *, listening: bool) -> tuple[str, bool]:
+    """Map a stdin command and current state to (action, new_listening).
+
+    action is one of 'start', 'stop', 'quit', 'noop', or 'unknown'.
+    'toggle' resolves to 'start' when idle and 'stop' while listening.
+    """
+    if command in ("start", "toggle") and not listening:
+        return "start", True
+    if command in ("stop", "toggle") and listening:
+        return "stop", False
+    if command in ("quit", "exit"):
+        return "quit", listening
+    if command in ("start", "stop", "toggle"):  # redundant transition, keep state
+        return "noop", listening
+    return "unknown", listening
+
+
+def _read_commands(loop: asyncio.AbstractEventLoop, queue: asyncio.Queue[str]) -> None:
+    """Blocking stdin reader (runs in a thread); forwards commands to the queue.
+
+    Closing the parent's write end (EOF) is treated as a 'quit' so the daemon
+    shuts down cleanly when its controller goes away.
+    """
+    for raw_line in sys.stdin:
+        command = raw_line.strip().lower()
+        if command:
+            loop.call_soon_threadsafe(queue.put_nowait, command)
+    loop.call_soon_threadsafe(queue.put_nowait, "quit")
+
+
+async def _capture_session(
+    cfg: DaemonConfig,
+    buffer: bytearray,
+    stop: asyncio.Event,
+    started: asyncio.Future[bool],
+) -> None:
+    """Open the mic, buffer audio until `stop` is set, then release the device.
+
+    The stream is only held for the duration of one listening session, so the
+    OS microphone indicator reflects when we are actually recording. `started`
+    is resolved once the device is live (or fails to open) so the caller can
+    surface open errors and emit LISTENING only when capture is really running.
+    """
+    stream_config = setup_input_stream(cfg.input_device_index)
+    try:
+        stream_cm = open_audio_stream(stream_config)
+        stream = stream_cm.__enter__()
+    except Exception as exc:
+        started.set_exception(exc)
+        return
+    started.set_result(True)
+    try:
+        while not stop.is_set():
+            try:
+                data, _ = await asyncio.to_thread(stream.read, constants.AUDIO_CHUNK_SIZE)
+            except Exception:
+                LOGGER.exception("Error reading audio stream")
+                await asyncio.sleep(0.1)
+                continue
+            buffer.extend(data.tobytes())
+    finally:
+        stream_cm.__exit__(None, None, None)
+
+
+async def _stdio_daemon_loop(cfg: DaemonConfig) -> None:  # noqa: PLR0915
+    """Push-to-talk daemon controlled over stdin (start/stop/toggle/quit).
+
+    The mic is opened on 'start' and released on 'stop'/'toggle', so the device
+    is only held while actually listening. Each session's buffer is finalized
+    into one segment, transcribed, copied to the clipboard, and emitted on
+    stdout. The process (and the loaded model/ASR connection) stays warm between
+    sessions; only the audio device is toggled.
+    """
+    loop = asyncio.get_running_loop()
+    commands: asyncio.Queue[str] = asyncio.Queue()
+    threading.Thread(
+        target=_read_commands,
+        args=(loop, commands),
+        name="agent-cli-stdio-reader",
+        daemon=True,
+    ).start()
+
+    buffer = bytearray()
+    shutdown = asyncio.Event()
+    listening = False
+    stop_capture: asyncio.Event | None = None
+    capture_task: asyncio.Task[None] | None = None
+
+    async def _start() -> None:
+        nonlocal listening, stop_capture, capture_task
+        buffer.clear()
+        stop_capture = asyncio.Event()
+        started: asyncio.Future[bool] = loop.create_future()
+        capture_task = asyncio.create_task(
+            _capture_session(cfg, buffer, stop_capture, started),
+        )
+        try:
+            await started
+        except Exception:
+            LOGGER.exception("Failed to open microphone")
+            _emit("ERROR could not open microphone")
+            capture_task = None
+            stop_capture = None
+            return
+        listening = True
+        _emit(_MSG_LISTENING)
+
+    async def _finalize() -> None:
+        nonlocal listening, stop_capture, capture_task
+        if stop_capture is not None:
+            stop_capture.set()
+        if capture_task is not None:
+            with suppress(asyncio.CancelledError):
+                await capture_task
+        listening = False
+        stop_capture = None
+        capture_task = None
+        segment = bytes(buffer)
+        buffer.clear()
+        _emit(_MSG_PROCESSING)
+        text = await _process_segment(cfg, segment, datetime.now(UTC).astimezone())
+        if text:
+            _emit_transcript(text)
+        _emit(_MSG_READY)
+
+    _emit(_MSG_READY)
+    try:
+        while not shutdown.is_set():
+            command = await commands.get()
+            action, _new_listening = _next_stdio_action(command, listening=listening)
+            if action == "start":
+                await _start()
+            elif action == "stop":
+                await _finalize()
+            elif action == "quit":
+                if listening:
+                    await _finalize()
+                shutdown.set()
+            elif action == "noop":
+                _emit(_MSG_LISTENING if listening else _MSG_READY)
+            else:  # unknown
+                _emit(f"ERROR unknown command: {command}")
+    finally:
+        if stop_capture is not None:
+            stop_capture.set()
+        if capture_task is not None:
+            capture_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await capture_task
+    _emit(_MSG_BYE)
+
+
+def _resolve_transcribe_live_extras(kwargs: dict[str, object]) -> tuple[str, ...]:
+    """Drop the VAD extra in --stdio mode: manual toggling doesn't use Silero VAD."""
+    if kwargs.get("stdio"):
+        return ("audio", "llm")
+    return ("audio", "vad", "llm")
+
+
 @app.command("transcribe-live", rich_help_panel="Voice Commands")
-@requires_extras("audio", "vad", "llm", process_name="transcribe-live")
+@requires_extras(
+    "audio",
+    "vad",
+    "llm",
+    process_name="transcribe-live",
+    resolve_extras=_resolve_transcribe_live_extras,
+)
 def transcribe_live(  # noqa: PLR0912
     *,
     # Daemon-specific options
+    stdio: bool = typer.Option(
+        False,  # noqa: FBT003
+        "--stdio",
+        help=(
+            "Run as a push-to-talk daemon controlled over stdin instead of VAD. A parent "
+            "process sends 'start', 'stop', 'toggle', or 'quit' lines; each completed "
+            "recording is transcribed, copied to the clipboard, and emitted on stdout "
+            "wrapped in TRANSCRIPT_BEGIN/TRANSCRIPT_END. Ideal for hotkey toggling."
+        ),
+    ),
     role: str = typer.Option(
         "user",
         "--role",
@@ -385,6 +600,17 @@ def transcribe_live(  # noqa: PLR0912
 
     **Use cases:** Meeting transcription, note-taking, voice journaling, accessibility.
 
+    **`--stdio` (push-to-talk daemon):** Instead of VAD, a parent process drives
+    listening over stdin. The process stays warm (no interpreter/model reload
+    per press) while the microphone is opened only while listening, so your OS
+    mic indicator reflects reality — ideal for a hotkey app.
+
+    - Commands on stdin (one per line, case-insensitive): `start`, `stop`,
+      `toggle`, `quit` (EOF also quits).
+    - Events on stdout: `READY`, `LISTENING`, `PROCESSING`, `BYE`, and the
+      transcript wrapped in `TRANSCRIPT_BEGIN` / `TRANSCRIPT_END` (it may span
+      multiple lines). Each transcript is also copied to the clipboard.
+
     **Examples:**
 
         agent-cli transcribe-live
@@ -392,6 +618,7 @@ def transcribe_live(  # noqa: PLR0912
         agent-cli transcribe-live --llm --clipboard --role notes
         agent-cli transcribe-live --transcription-log ~/meeting.jsonl --no-save-audio
         agent-cli transcribe-live --asr-provider openai --llm-provider gemini --llm
+        agent-cli transcribe-live --stdio --llm   # hotkey app pipes toggle/quit to stdin
 
     **Tips:**
 
@@ -399,9 +626,17 @@ def transcribe_live(  # noqa: PLR0912
     - Adjust `--vad-threshold` if detection is too sensitive (increase) or missing speech (decrease)
     - Use `--stop` to cleanly terminate a running process
     - With `--llm`, transcripts are cleaned up (punctuation, filler words removed)
+    - With `--stdio`, send `toggle` on a keypress to start, again to stop and get the text
     """
     if print_args:
         print_command_line_args(locals())
+
+    if stdio:
+        # The parent process drives us over stdin/stdout, which is the protocol
+        # channel: force quiet so nothing else lands on stdout, and always copy
+        # to the clipboard (transcripts are emitted on stdout regardless).
+        quiet = True
+        clipboard = True
     setup_logging(log_level, log_file_logging, quiet=quiet)
 
     process_name = "transcribe-live"
@@ -425,8 +660,8 @@ def transcribe_live(  # noqa: PLR0912
             print_with_style(f"⚠️ {process_name} is not running", style="yellow")
         return
 
-    # Validate VAD threshold
-    if vad_threshold < 0.0 or vad_threshold > 1.0:
+    # Validate VAD threshold (irrelevant in --stdio mode, which bypasses VAD)
+    if not stdio and (vad_threshold < 0.0 or vad_threshold > 1.0):
         print_with_style("❌ VAD threshold must be 0.0-1.0", style="red")
         raise typer.Exit(1)
 
@@ -455,17 +690,22 @@ def transcribe_live(  # noqa: PLR0912
         return
     resolved_input_device_index, _, _ = device_info
 
-    # Import VAD here to avoid loading torch/numpy at module import time
-    from agent_cli.core.vad import VoiceActivityDetector  # noqa: PLC0415
+    # Import VAD here to avoid loading torch/numpy at module import time.
+    # --stdio mode toggles listening manually, so it needs no VAD at all.
+    vad = None
+    if not stdio:
+        from agent_cli.core.vad import VoiceActivityDetector  # noqa: PLC0415
+
+        vad = VoiceActivityDetector(
+            threshold=vad_threshold,
+            silence_threshold_ms=int(silence_threshold * 1000),
+            min_speech_duration_ms=int(min_segment * 1000),
+        )
 
     # Create daemon config
     cfg = DaemonConfig(
         role=role,
-        vad=VoiceActivityDetector(
-            threshold=vad_threshold,
-            silence_threshold_ms=int(silence_threshold * 1000),
-            min_speech_duration_ms=int(min_segment * 1000),
-        ),
+        vad=vad,
         input_device_index=resolved_input_device_index,
         provider=config.ProviderSelection(
             asr_provider=asr_provider,
@@ -505,8 +745,9 @@ def transcribe_live(  # noqa: PLR0912
     )
 
     # Run the daemon
+    daemon = _stdio_daemon_loop(cfg) if stdio else _daemon_loop(cfg)
     with process.pid_file_context(process_name), suppress(KeyboardInterrupt):
-        asyncio.run(_daemon_loop(cfg))
+        asyncio.run(daemon)
 
     if not quiet:
         console.print()

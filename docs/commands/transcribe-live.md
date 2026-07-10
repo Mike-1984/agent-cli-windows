@@ -53,6 +53,49 @@ agent-cli transcribe-live --llm
 agent-cli transcribe-live --silence-threshold 1.5
 ```
 
+## Push-to-talk over stdio (`--stdio`)
+
+With `--stdio`, `transcribe-live` becomes a **push-to-talk daemon** driven by a
+parent process instead of VAD. The process stays warm — no interpreter/model
+reload per press — while the **microphone is opened only while listening** and
+released on stop, so your OS mic indicator reflects when you're actually
+recording. Ideal for binding to a hotkey app that pipes commands to the
+daemon's stdin.
+
+- **Commands (stdin, one per line, case-insensitive):** `start`, `stop`,
+  `toggle`, `quit` (aliases: `exit`). Closing the parent's write end (EOF) also
+  quits.
+- **Events (stdout, one per line):** `READY` (idle), `LISTENING`,
+  `PROCESSING`, `BYE`, and `ERROR unknown command: <cmd>`. The transcript is
+  emitted between `TRANSCRIPT_BEGIN` and `TRANSCRIPT_END` sentinels (it may span
+  multiple lines). Each transcript is also copied to the clipboard.
+- In this mode `--quiet` is forced (stdout is the protocol channel) and the
+  clipboard is always updated. VAD options (`--silence-threshold`,
+  `--min-segment`, `--vad-threshold`) are ignored, and the `vad` extra is not
+  required.
+
+```bash
+agent-cli transcribe-live --stdio --llm
+```
+
+A hotkey app would launch that command once, then on each keypress write
+`toggle\n` to its stdin — the first toggle starts recording, the second stops it
+and returns the transcript on stdout (and the clipboard). Example exchange:
+
+```text
+> READY
+< toggle
+> LISTENING
+< toggle
+> PROCESSING
+> TRANSCRIPT_BEGIN
+> Hello, this is my dictated note.
+> TRANSCRIPT_END
+> READY
+< quit
+> BYE
+```
+
 ## Options
 
 <!-- CODE:START -->
@@ -65,6 +108,7 @@ agent-cli transcribe-live --silence-threshold 1.5
 
 | Option | Default | Description |
 |--------|---------|-------------|
+| `--stdio` | `false` | Run as a push-to-talk daemon controlled over stdin instead of VAD. A parent process sends 'start', 'stop', 'toggle', or 'quit' lines; each completed recording is transcribed, copied to the clipboard, and emitted on stdout wrapped in TRANSCRIPT_BEGIN/TRANSCRIPT_END. Ideal for hotkey toggling. |
 | `--role, -r` | `user` | Label for log entries. Use to distinguish speakers or contexts in logs. |
 | `--silence-threshold, -s` | `1.0` | Seconds of silence after speech to finalize a segment. Increase for slower speakers. |
 | `--min-segment, -m` | `0.25` | Minimum seconds of speech required before a segment is processed. Filters brief sounds. |
