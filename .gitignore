@@ -49,6 +49,10 @@ worktrees/
 # Scratch notes / working files (not part of the project)
 scratch/
 
+# Local prompt overrides (--system-prompt-file / --instructions-file); may
+# contain personal or project-specific content
+.prompts/
+
 # Submodule
 cli-submodule/
 
